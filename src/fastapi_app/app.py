@@ -21,7 +21,9 @@ if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
 
 
 # Setup FastAPI app:
-app = FastAPI()
+from .mcp_server import mcp, mcp_lifespan
+app = FastAPI(lifespan=mcp_lifespan)
+app.mount("/mcp", mcp.streamable_http_app())
 parent_path = pathlib.Path(__file__).parent.parent
 app.mount("/mount", StaticFiles(directory=parent_path / "static"), name="static")
 templates = Jinja2Templates(directory=parent_path / "templates")
