@@ -14,12 +14,12 @@ products:
 - azure-virtual-network
 - ai-services
 urlFragment: msdocs-fastapi-postgresql-sample-app
-name: Deploy FastAPI application with PostgreSQL and MCP Server on Azure App Service (Python)
+name: Deploy FastAPI Application with PostgreSQL & MCP Server on Azure App Service with Entra Agent Identity Auth (Python)
 description: This project deploys a restaurant review web application using FastAPI with Python, Azure Database for PostgreSQL - Flexible Server, and a Model Context Protocol (MCP) server secured with Microsoft Entra ID authentication. It demonstrates how to expose MCP tools to Azure AI Foundry agents using managed identity (agent identity) authentication.
 ---
 <!-- YAML front-matter schema: https://review.learn.microsoft.com/en-us/help/contribute/samples/process/onboarding?branch=main#supported-metadata-fields-for-readmemd -->
 
-# Deploy FastAPI Application with PostgreSQL and MCP Server via Azure App Service
+# Deploy FastAPI Application with PostgreSQL & MCP Server on Azure App Service with Entra Agent Identity Auth
 
 This project deploys a web application for a restaurant review site using **FastAPI**. It includes a **Model Context Protocol (MCP)** server that exposes restaurant review tools, secured with **Microsoft Entra ID** authentication and preauthorized for **Azure AI Foundry** agent identities.
 
