@@ -9,7 +9,7 @@ the Microsoft Entra SDK for AgentID (sidecar) for token validation instead of
 Architecture:
   ┌─────────────┐     ┌─────────────────────────┐     ┌──────────────────────┐
   │  Foundry     │────▶│  FastAPI + MCP Server    │────▶│  Agent ID SDK        │
-  │  Agent       │     │  (this file)             │     │  Sidecar             │
+  │  Agent       │     │  ()             │     │  Sidecar             │
   │              │◀────│  port 8000               │◀────│  http://localhost:5000│
   └─────────────┘     └─────────────────────────┘     └──────────────────────┘
                            │                               │
