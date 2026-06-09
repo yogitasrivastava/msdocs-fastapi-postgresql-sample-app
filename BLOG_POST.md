@@ -1,4 +1,4 @@
-# Securing Your MCP Server on Azure App Service with Microsoft Entra Agent Identity for Autonomous Agents
+# Securing an MCP Server on Azure App Service with Microsoft Entra Authentication and Enabling Access via Agent Identity Authentication for Autonomous Agents
 
 ## Introduction
 
