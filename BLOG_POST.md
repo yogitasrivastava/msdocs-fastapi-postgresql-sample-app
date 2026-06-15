@@ -1,4 +1,4 @@
-## Secure an MCP Server on Azure App Service with Microsoft Entra Authentication and Agent Identity
+# Secure an MCP Server on Azure App Service with Microsoft Entra Authentication and Agent Identity
 
 
 ## Introduction
