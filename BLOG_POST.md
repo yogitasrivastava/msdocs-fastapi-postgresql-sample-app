@@ -292,9 +292,9 @@ Enable App Service Authentication and configure the Microsoft identity provider 
 
 The `allowedClientApplications` setting is what prevents any valid tenant token from calling the API. The token still needs to come from a caller whose client application is explicitly allowed.
 
-The Azure AI Foundry project identity can be found from the project identity details in the Azure portal or from the project identity JSON.
+The Azure AI Foundry project identity can be found from the project identity details in the Azure portal or from the deployed resource JSON.
 
-![Azure AI Foundry project identity details](image-3.png)
+![Azure AI Foundry project identity details](./image-3.png)
 
 ## Step 5: Configure Protected Resource Metadata
 
@@ -351,15 +351,15 @@ After the App Service endpoint is deployed and secured, add it as a custom MCP t
 
 1. In Azure AI Foundry, add a tool and choose the custom MCP server option.
 
-![Add a custom MCP server tool in Azure AI Foundry](image.png)
+![Add a custom MCP server tool in Azure AI Foundry](./image.png)
 
 2. Enter the App Service MCP endpoint URL. For authentication, choose Microsoft Agent identity. You can test the MCP server without authentication first by temporarily disabling App Service authentication, but turn authentication back on before validating the secured path.
 
-![Configure custom MCP server URL and Microsoft Agent identity authentication](image-1.png)
+![Configure custom MCP server URL and Microsoft Agent identity authentication](./image-1.png)
 
 3. Create or open the agent from the Agent section.
 
-![Create an agent in Azure AI Foundry](image-2.png)
+![Create an agent in Azure AI Foundry](./image-2.png)
 
 4. Attach the MCP tool to the agent and test it in the playground with restaurant-related prompts.
 
