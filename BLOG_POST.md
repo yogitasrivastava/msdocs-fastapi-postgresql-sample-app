@@ -7,12 +7,6 @@ The Model Context Protocol (MCP) is becoming a common way to connect AI agents t
 
 In this walkthrough, we secure a FastMCP server running on Azure App Service with Microsoft Entra ID authentication. The server is called by an Azure AI Foundry agent through its agent identity, and the application does not need to validate tokens in Python code. Azure App Service EasyAuth handles that responsibility at the platform layer.
 
-The result is a clean separation of concerns:
-
-* Azure App Service validates the incoming token.
-* Microsoft Entra ID issues tokens for trusted callers.
-* App roles grant application permissions to managed identities.
-* FastAPI and FastMCP stay focused on the MCP tools.
 
 ## Scenario
 
