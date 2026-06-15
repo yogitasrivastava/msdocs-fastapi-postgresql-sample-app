@@ -345,25 +345,8 @@ az rest --method POST \
 > [!IMPORTANT]
 > `ServiceIdentity` principals cannot be added to `preAuthorizedApplications`. Microsoft Graph returns an `InvalidAppId` error for that path. Use app role assignment together with EasyAuth `allowedClientApplications` for managed identity access.
 
-## Step 7: Connect the MCP server in Azure AI Foundry
 
-After the App Service endpoint is deployed and secured, add it as a custom MCP tool in Azure AI Foundry.
-
-1. In Azure AI Foundry, add a tool and choose the custom MCP server option.
-
-![Add a custom MCP server tool in Azure AI Foundry](./image.png)
-
-2. Enter the App Service MCP endpoint URL. For authentication, choose Microsoft Agent identity. You can test the MCP server without authentication first by temporarily disabling App Service authentication, but turn authentication back on before validating the secured path.
-
-![Configure custom MCP server URL and Microsoft Agent identity authentication](./image-1.png)
-
-3. Create or open the agent from the Agent section.
-
-![Create an agent in Azure AI Foundry](./image-2.png)
-
-4. Attach the MCP tool to the agent and test it in the playground with restaurant-related prompts.
-
-## Step 8: Validate the secured MCP endpoint
+## Step 7: Validate the secured MCP endpoint
 
 We validated the setup across three test groups.
 
@@ -404,6 +387,28 @@ async def test_with_auth():
             tools = await session.list_tools()
             result = await session.call_tool("list_restaurants_mcp", {})
 ```
+
+
+
+
+## Step 8: Connect the MCP server in Azure AI Foundry
+
+After the App Service endpoint is deployed and secured, add it as a custom MCP tool in Azure AI Foundry.
+
+1. In Azure AI Foundry, add a tool and choose the custom MCP server option.
+
+![Add a custom MCP server tool in Azure AI Foundry](./image.png)
+
+2. Enter the App Service MCP endpoint URL. For authentication, choose Microsoft Agent identity. You can test the MCP server without authentication first by temporarily disabling App Service authentication, but turn authentication back on before validating the secured path.
+
+![Configure custom MCP server URL and Microsoft Agent identity authentication](./image-1.png)
+
+3. Create or open the agent from the Agent section.
+
+![Create an agent in Azure AI Foundry](./image-2.png)
+
+4. Attach the MCP tool to the agent and test it in the playground with restaurant-related prompts.
+
 
 ## Lessons learned
 
