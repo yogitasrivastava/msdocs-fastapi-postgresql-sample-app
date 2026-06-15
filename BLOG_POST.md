@@ -1,18 +1,5 @@
----
-title: Secure an MCP Server on Azure App Service with Microsoft Entra Authentication and Agent Identity
-description: Learn how to protect a FastMCP server on Azure App Service with Microsoft Entra ID, EasyAuth v2, app roles, Protected Resource Metadata, and Azure AI Foundry agent identities.
-author: Aneep Agrawal
-ms.date: 2026-06-15
-ms.topic: tutorial
-keywords:
-  - model context protocol
-  - fastmcp
-  - azure app service
-  - microsoft entra id
-  - azure ai foundry
-  - agent identity
-estimated_reading_time: 10
----
+## Secure an MCP Server on Azure App Service with Microsoft Entra Authentication and Agent Identity
+
 
 ## Introduction
 
