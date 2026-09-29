@@ -1,160 +1,314 @@
-# Securing Your MCP Server on Azure App Service with Microsoft Entra Agent Identity for Autonomous Agents
+# Securing an MCP Server on Azure App Service with Microsoft Entra Authentication and Enabling Access via Agent Identity Authentication for Autonomous Agents
+
 
 ## Introduction
 
-The **Model Context Protocol (MCP)** is rapidly becoming the standard for connecting AI agents to external tools and data sources. When you deploy an MCP server on **Azure App Service**, you need robust authentication to ensure only authorized clients can access it.
+The Model Context Protocol (MCP) is becoming a common way to connect AI agents to external tools, APIs, and data sources. Once those tools are deployed outside a local development environment, authentication becomes a core part of the design. An MCP endpoint should only be callable by trusted clients, especially when it can expose business data or trigger actions.
 
-In this post, we will walk through how we secured a **FastMCP server** running on **Azure App Service** with **Microsoft Entra ID** authentication, and preauthorized **Microsoft Foundry** agent identities to call it — all without modifying a single line of application-level auth code. All resources are private and access is gated behind Entra ID.
+In this walkthrough, we secure a FastMCP server running on Azure App Service with Microsoft Entra ID authentication. The server is called by an Azure AI Foundry agent through its agent identity, and the application does not need to validate tokens in Python code. Azure App Service EasyAuth handles that responsibility at the platform layer.
 
-[Aneep to add logging info]
 
-## The Scenario
+## Scenario
 
-We have a FastAPI restaurant review application deployed on Azure App Service. We added an MCP server that exposes four tools:
+The sample application is a FastAPI restaurant review app deployed to Azure App Service. To keep the authentication pattern easy to follow, the MCP server in this post uses static restaurant data rather than a database. That keeps the focus on identity, access control, and MCP client configuration.
+
+The MCP server exposes four tools:
 
 | Tool | Description |
 |------|-------------|
-| `list_restaurants_mcp` | List all restaurants with average rating and review count |
-| `get_details_mcp` | Get a restaurant's details and all its reviews |
-| `create_review_mcp` | Add a new review to a restaurant |
-| `create_restaurant_mcp` | Create a new restaurant |
+| `list_restaurants_mcp` | Lists restaurants with average rating and review count |
+| `get_details_mcp` | Returns restaurant details and sample reviews |
+| `recommend_restaurant_mcp` | Recommends a restaurant by cuisine and minimum rating |
+| `summarize_restaurant_mcp` | Creates a short agent-friendly restaurant summary |
 
-The goal: allow a **MAF(Microsoft Agent Framework)** agent deployed to the **Microsoft Foundry** to securely call these tools using its agent identity, while rejecting all unauthorized requests.
+The goal is to allow a Microsoft Agent Framework agent deployed to Azure AI Foundry to call these tools securely by using its agent identity. Any request without a valid token, a valid audience, and an approved client identity should be rejected.
 
 ## Architecture
 
+```text
+Azure AI Foundry deployed agent
+  |
+  | client_credentials flow with MCP.Access app role
+  v
+Azure App Service with EasyAuth v2 and Return401
+  |
+  | JWT validated for issuer, audience, and allowed client application
+  v
+FastAPI and gunicorn with lifespan enabled
+  |
+  | /api/mcp mounted as FastMCP streamable HTTP
+  v
+Static restaurant MCP tools
 ```
-Microsoft Foundry deployed Agent
-    │
-    │  client_credentials flow (MCP.Access app role)
-    ▼
-Azure App Service (EasyAuth v2, Return401)
-    │
-    │  JWT validated: issuer, audience, allowedClientApplications
-    ▼
-FastAPI + gunicorn (lifespan: on)
-    │
-    │  /mcp/mcp → FastMCP (stateless_http)
-    ▼
-MCP Tools → PostgreSQL
+
+EasyAuth is the important boundary in this design. It validates Microsoft Entra tokens before traffic reaches the FastAPI application. The app does not parse the `Authorization` header, inspect claims, or implement its own allowlist.
+
+## Step 1: Add the MCP server to FastAPI
+
+Start by adding `fastmcp` to the app-local dependencies in `src/pyproject.toml`:
+
+```toml
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "uvicorn-worker",
+    "fastmcp",
+]
 ```
 
-The key insight: **EasyAuth handles all authentication at the platform layer** — the application code never touches tokens or validates claims. This is clean separation of concerns.
-
-## Step 1: Adding the MCP Server to FastAPI
-
-First, we added `mcp[cli]` to our dependencies and created a simple MCP server:
+Next, create `src/fastapi_app/mcp_server.py`. The tool implementation below uses static sample values. In a production app, you can replace the in-memory lists with database queries or API calls while keeping the same authentication design.
 
 ```python
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
-# stateless_http=True is required for mounting under FastAPI
-mcp = FastMCP("RestaurantReviewsMCP", stateless_http=True)
+mcp = FastMCP(name="RestaurantReviewsMCP")
+
+RESTAURANTS = [
+    {
+        "id": 1,
+        "name": "Contoso Curry House",
+        "cuisine": "Indian",
+        "street_address": "12 Market Street",
+        "description": "A casual spot for thali, biryani, and late-night chai.",
+        "avg_rating": 4.7,
+        "review_count": 128,
+    },
+    {
+        "id": 2,
+        "name": "Northwind Noodles",
+        "cuisine": "Japanese",
+        "street_address": "48 Harbor Road",
+        "description": "Small ramen bar known for rich broth and quick service.",
+        "avg_rating": 4.5,
+        "review_count": 94,
+    },
+    {
+        "id": 3,
+        "name": "Fabrikam Fire Grill",
+        "cuisine": "Modern Australian",
+        "street_address": "7 King Avenue",
+        "description": "Open-flame cooking with seasonal local produce.",
+        "avg_rating": 4.2,
+        "review_count": 61,
+    },
+]
+
+REVIEWS = {
+    1: [
+        {"user_name": "Maya", "rating": 5, "review_text": "Great spice balance and fast service."},
+        {"user_name": "Liam", "rating": 4, "review_text": "Loved the biryani. The dining room was busy."},
+    ],
+    2: [
+        {"user_name": "Noah", "rating": 5, "review_text": "Excellent broth and perfectly cooked noodles."},
+        {"user_name": "Ava", "rating": 4, "review_text": "Compact menu, but everything tasted fresh."},
+    ],
+    3: [
+        {"user_name": "Amelia", "rating": 4, "review_text": "The grill flavors were excellent."},
+        {"user_name": "Ethan", "rating": 4, "review_text": "Good option for a team dinner."},
+    ],
+}
+
 
 @mcp.tool()
 async def list_restaurants_mcp() -> list[dict]:
     """List restaurants with their average rating and review count."""
-    # ... database query logic
-```
 
-We mounted it in `app.py`:
+    return RESTAURANTS
 
-```python
-from .mcp_server import mcp, mcp_lifespan
 
-app = FastAPI(lifespan=mcp_lifespan)
-app.mount("/mcp", mcp.streamable_http_app())
-```
+@mcp.tool()
+async def get_details_mcp(restaurant_id: int) -> dict | None:
+    """Return a restaurant and its sample reviews."""
 
-### Critical: Gunicorn Lifespan Configuration
+    restaurant = next(
+        (item for item in RESTAURANTS if item["id"] == restaurant_id),
+        None,
+    )
+    if restaurant is None:
+        return None
 
-The MCP session manager requires lifespan events. Without this, **all MCP requests fail in production**:
+    return {
+        "restaurant": restaurant,
+        "reviews": REVIEWS.get(restaurant_id, []),
+    }
 
-```python
-class MyUvicornWorker(UvicornWorker):
-    CONFIG_KWARGS = {
-        "loop": "asyncio",
-        "http": "auto",
-        "lifespan": "on",      # CRITICAL: must be "on" for MCP
+
+@mcp.tool()
+async def recommend_restaurant_mcp(
+    cuisine: str | None = None,
+    minimum_rating: float = 4.0,
+) -> dict:
+    """Recommend the highest-rated restaurant that matches the filters."""
+
+    matches = [
+        restaurant
+        for restaurant in RESTAURANTS
+        if restaurant["avg_rating"] >= minimum_rating
+        and (cuisine is None or restaurant["cuisine"].lower() == cuisine.lower())
+    ]
+    if not matches:
+        return {
+            "recommendation": None,
+            "reason": "No restaurant matched the requested filters.",
+        }
+
+    recommendation = max(matches, key=lambda item: item["avg_rating"])
+    return {
+        "recommendation": recommendation,
+        "reason": f"Highest-rated match at {recommendation['avg_rating']} stars.",
+    }
+
+
+@mcp.tool()
+async def summarize_restaurant_mcp(restaurant_id: int) -> dict | None:
+    """Create a short agent-friendly restaurant summary."""
+
+    details = await get_details_mcp(restaurant_id)
+    if details is None:
+        return None
+
+    restaurant = details["restaurant"]
+    summary = (
+        f"{restaurant['name']} is a {restaurant['cuisine']} restaurant rated "
+        f"{restaurant['avg_rating']} stars across {restaurant['review_count']} reviews. "
+        f"It is located at {restaurant['street_address']}."
+    )
+    return {
+        "restaurant_id": restaurant_id,
+        "summary": summary,
     }
 ```
 
-## Step 2: Deploying to Azure App Service
+Mount the MCP app in `app.py`. The MCP app owns the MCP path, and FastAPI mounts that app under a prefix.
+
+```python
+import uvicorn
+from fastapi import FastAPI
+
+from .mcp_server import mcp
+
+MOUNT_PREFIX = "/api"
+MCP_PATH = "/mcp"
+
+mcp_app = mcp.http_app(path=MCP_PATH, transport="streamable-http")
+
+app = FastAPI(lifespan=mcp_app.lifespan)
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "healthy", "service": "restaurant-mcp-server"}
+
+
+app.mount(MOUNT_PREFIX, mcp_app)
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8001, log_level="info")
+```
+
+With this mount shape, the local streamable HTTP endpoint is `http://127.0.0.1:8001/api/mcp`. After deployment, the same endpoint is protected behind the App Service URL.
+
+### Enable lifespan for MCP
+
+The MCP HTTP app exposes its own lifespan handler, so FastAPI must be created with `lifespan=mcp_app.lifespan`. Gunicorn also needs lifespan events enabled. Without both pieces, MCP requests can fail in production because the MCP session manager never starts.
+
+
+## Step 2: Deploy to Azure App Service
+
+Deploy the app with the Azure Developer CLI:
 
 ```bash
 azd auth login
 azd up
 ```
 
-Before enabling auth, we verified the MCP endpoint worked:
+Before enabling authentication, confirm that the MCP endpoint works. This verifies the application, MCP mount, and transport before EasyAuth is added to the path.
 
 ```bash
-curl -X POST https://<your-app>.azurewebsites.net/mcp/mcp \
+curl -X POST https://<your-app>.azurewebsites.net/api/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
 ```
 
-## Step 3: Entra ID App Registration
+## Step 3: Create the Microsoft Entra app registration
 
-We created an app registration with:
-
-1. **Application ID URI**: `api://<client-id>`
-2. **Delegated scope**: `user_impersonation` (for interactive users)
-3. **App role**: `MCP.Access` with `allowedMemberTypes: ["Application"]` (for managed identities)
-4. **Service Principal**: Required for app role assignments to work
+The App Service needs an Entra app registration that represents the protected MCP resource. Create the app registration first:
 
 ```bash
-# Create the app registration
 az ad app create --display-name "my-mcp-server-auth" \
   --sign-in-audience AzureADMyOrg
-
-# Add Application ID URI
-az ad app update --id <client-id> \
-  --identifier-uris "api://<client-id>"
-
-# Create Service Principal (often missed!)
-az ad sp create --id <client-id>
 ```
 
-### The App Role
+Capture the generated client ID and object ID. Then set the Application ID URI:
 
-For managed identities (like Foundry agents) that use `client_credentials` flow, you need an **app role**, not a delegated scope:
+```bash
+az ad app update --id <client-id> \
+  --identifier-uris "api://<client-id>"
+```
+
+Configure the app registration with these access surfaces:
+
+| Configuration | Purpose |
+|---------------|---------|
+| Application ID URI: `api://<client-id>` | Defines the protected resource audience |
+| Delegated scope: `user_impersonation` | Supports interactive user flows and PRM discovery |
+| App role: `MCP.Access` | Grants application permissions for managed identities |
+| Service principal | Enables app role assignment to callers |
+
+For Azure AI Foundry agent identities, the app role is the critical piece. Managed identities use the `client_credentials` flow, so they need an application role rather than a delegated permission scope.
 
 ```json
 {
-  "appRoles": [{
-    "allowedMemberTypes": ["Application"],
-    "displayName": "MCP.Access",
-    "description": "Allow application to access MCP server",
-    "isEnabled": true,
-    "value": "MCP.Access"
-  }]
+  "appRoles": [
+    {
+      "allowedMemberTypes": ["Application"],
+      "displayName": "MCP.Access",
+      "description": "Allow application to access MCP server",
+      "isEnabled": true,
+      "value": "MCP.Access"
+    }
+  ]
 }
 ```
 
-## Step 4: Enabling App Service Authentication (EasyAuth)
+Create the service principal for the app registration. This step is easy to miss, but app role assignments depend on it.
 
-We configured EasyAuth v2 via the ARM API with these key settings:
+```bash
+az ad sp create --id <client-id>
+```
 
-| Setting | Value | Why |
-|---------|-------|-----|
-| `runtimeVersion` | `~2` | v1 doesn't properly enforce auth |
-| `unauthenticatedClientAction` | `Return401` | API behavior (no browser redirects) |
-| `allowedAudiences` | `api://<client-id>`, `<client-id>` | Accept both audience formats |
-| `allowedClientApplications` | Agent & Project identity IDs | Only these clients can call the API |
+## Step 4: Enable App Service authentication with EasyAuth
 
-### Protected Resource Metadata (PRM)
+Enable App Service Authentication and configure the Microsoft identity provider through the App Service Auth Settings v2 API. The key settings are:
 
-PRM tells MCP clients how to authenticate. It's served automatically by EasyAuth:
+| Setting | Value | Why it matters |
+|---------|-------|----------------|
+| `runtimeVersion` | `~2` | Uses the current EasyAuth runtime behavior |
+| `unauthenticatedClientAction` | `Return401` | Returns API-friendly 401 responses instead of browser redirects |
+| `allowedAudiences` | `api://<client-id>`, `<client-id>` | Accepts both common token audience formats |
+| `allowedClientApplications` | Foundry agent and project identity app IDs | Restricts access to approved client applications |
+
+The `allowedClientApplications` setting is what prevents any valid tenant token from calling the API. The token still needs to come from a caller whose client application is explicitly allowed.
+
+The Azure AI Foundry project identity can be found from the project identity details in the Azure portal or from the deployed resource JSON.
+
+![Azure AI Foundry project identity details](./image-3.png)
+
+## Step 5: Configure Protected Resource Metadata
+
+Protected Resource Metadata (PRM) tells MCP clients how to authenticate to the protected resource. When PRM is configured, clients can discover the authorization server and supported scopes from the App Service endpoint.
+
+Add the PRM scope setting to the App Service:
 
 ```bash
 az webapp config appsettings set \
-  --name <app-name> --resource-group <rg> \
+  --name <app-name> --resource-group <resource-group> \
   --settings WEBSITE_AUTH_PRM_DEFAULT_WITH_SCOPES="api://<client-id>/user_impersonation"
 ```
 
-The `/.well-known/oauth-protected-resource` endpoint returns:
+After this setting is applied, the `/.well-known/oauth-protected-resource` endpoint returns metadata similar to this:
 
 ```json
 {
@@ -168,15 +322,16 @@ The `/.well-known/oauth-protected-resource` endpoint returns:
 }
 ```
 
-## Step 5: Preauthorizing Foundry Agent Identities
+## Step 6: Preauthorize Azure AI Foundry agent identities
 
-Azure AI Foundry agents use managed identities of type `ServiceIdentity`. They authenticate via `client_credentials` flow and need:
+Azure AI Foundry agents use managed identities of type `ServiceIdentity`. To call the MCP server, each identity needs two things:
 
-1. An **app role assignment** granting them `MCP.Access`
-2. Their appId listed in EasyAuth's **`allowedClientApplications`**
+1. An app role assignment that grants `MCP.Access`
+2. Its app ID listed in EasyAuth `allowedClientApplications`
+
+Grant the app role to the agent identity:
 
 ```bash
-# Grant app role to the agent identity
 az rest --method POST \
   --uri "https://graph.microsoft.com/v1.0/servicePrincipals/<agent-principal-id>/appRoleAssignments" \
   --headers "Content-Type=application/json" \
@@ -187,36 +342,43 @@ az rest --method POST \
   }'
 ```
 
-> **Important**: `ServiceIdentity` type principals **cannot** be added to `preAuthorizedApplications` — you'll get an `InvalidAppId` error. The app role assignment + `allowedClientApplications` approach is correct for managed identities.
+> [!IMPORTANT]
+> `ServiceIdentity` principals cannot be added to `preAuthorizedApplications`. Microsoft Graph returns an `InvalidAppId` error for that path. Use app role assignment together with EasyAuth `allowedClientApplications` for managed identity access.
 
-## Testing: 22 Scenarios Across 3 Groups
 
-We validated the setup with comprehensive test coverage across 3 groups.
+## Step 7: Validate the secured MCP endpoint
 
-### Group A: Without Authentication (8 tests)
+We validated the setup across three test groups.
 
-With auth temporarily disabled to verify baseline MCP functionality, we confirmed the server works end-to-end:
-- Root endpoint returns 200
-- PRM endpoint returns 404 (it's served by EasyAuth, not the app)
-- MCP `initialize`, `tools/list`, and all 4 tool calls succeed
+### Baseline tests without authentication
 
-### Group B: With Authentication (11 tests)
+With App Service authentication temporarily disabled, the baseline tests confirm the MCP server works end to end:
 
-With auth enabled (the production configuration), we verified:
-- **Negative cases**: No token → 401, fake token → 401, wrong audience → 401
-- **PRM exemption**: The `.well-known/oauth-protected-resource` endpoint is accessible without auth (by design — clients need it to discover how to authenticate)
-- **Positive cases**: Valid token → MCP `initialize`, `tools/list`, and all 4 tool calls succeed
+* The root endpoint returns 200.
+* The PRM endpoint returns 404 because EasyAuth serves it, not the app.
+* MCP `initialize`, `tools/list`, and all four tool calls succeed.
 
-### Group C: Python MCP Client (3 tests)
+### Authentication tests with EasyAuth enabled
 
-End-to-end programmatic tests using the `mcp` Python SDK:
+With authentication enabled, the tests verify both rejection and success paths:
+
+* Requests with no token return 401.
+* Requests with a fake token return 401.
+* Requests with the wrong audience return 401.
+* The `/.well-known/oauth-protected-resource` endpoint remains accessible so clients can discover how to authenticate.
+* Requests with a valid token from an allowed client can call `initialize`, `tools/list`, and all four MCP tools.
+
+### Programmatic MCP client test
+
+The final test uses the Python MCP SDK with a token acquired through the `client_credentials` flow:
 
 ```python
-from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
 
 async def test_with_auth():
-    token = await get_token()  # client_credentials flow
+    token = await get_token()
     headers = {"Authorization": f"Bearer {token}"}
 
     async with streamablehttp_client(mcp_url, headers=headers) as (read, write, _):
@@ -226,34 +388,54 @@ async def test_with_auth():
             result = await session.call_tool("list_restaurants_mcp", {})
 ```
 
-## Key Lessons Learned
 
-### 1. EasyAuth `runtimeVersion` must be `~2`
 
-Version `~1` doesn't properly enforce authentication in all scenarios. We wasted time debugging before discovering this.
 
-### 2. Service Principal creation is required
+## Step 8: Connect the MCP server in Azure AI Foundry
 
-Without a service principal for your app registration, app role assignments will fail silently. Always run `az ad sp create --id <client-id>`.
+After the App Service endpoint is deployed and secured, add it as a custom MCP tool in Azure AI Foundry.
 
-### 3. `lifespan: "on"` is critical for MCP in production
+1. In Azure AI Foundry, add a tool and choose the custom MCP server option.
 
-The default gunicorn/uvicorn configuration may not run lifespan events. Without them, the MCP session manager never starts, and all requests fail with cryptic errors.
+![Add a custom MCP server tool in Azure AI Foundry](./image.png)
 
-### 4. `ServiceIdentity` cannot use `preAuthorizedApplications`
+2. Enter the App Service MCP endpoint URL. For authentication, choose Microsoft Agent identity. You can test the MCP server without authentication first by temporarily disabling App Service authentication, but turn authentication back on before validating the secured path.
 
-Foundry agent identities are `ServiceIdentity` type — they require app role assignments, not the `preAuthorizedApplications` mechanism used for regular app-to-app consent.
+![Configure custom MCP server URL and Microsoft Agent identity authentication](./image-1.png)
 
-### 5. PRM enables automatic auth discovery
+3. Create or open the agent from the Agent section.
 
-With Protected Resource Metadata configured, MCP clients can automatically discover the authorization server and required scopes without manual configuration.
+![Create an agent in Azure AI Foundry](./image-2.png)
+
+4. Attach the MCP tool to the agent and test it in the playground with restaurant-related prompts.
+
+
+## Lessons learned
+
+### Use EasyAuth runtime version `~2`
+
+EasyAuth runtime version `~2` is required for the behavior expected by this setup. Older runtime behavior can lead to confusing authentication enforcement issues.
+
+### Create the service principal for the app registration
+
+The app registration alone is not enough. App role assignments target the service principal, so create it before assigning `MCP.Access` to agent identities.
+
+### Enable lifespan for gunicorn and FastMCP
+
+FastMCP depends on lifespan events for its session manager. Configure FastAPI with the MCP lifespan handler and set gunicorn lifespan to `on`.
+
+### Use app roles for managed identities
+
+Azure AI Foundry agent identities are `ServiceIdentity` principals. They need app role assignments, not `preAuthorizedApplications`.
+
+### Configure PRM for MCP client discovery
+
+Protected Resource Metadata allows MCP clients to discover the authorization server and scopes instead of relying on manual authentication settings.
 
 ## Conclusion
 
-By leveraging **EasyAuth v2** with **app roles** and **Protected Resource Metadata**, we secured an MCP server for Azure AI Foundry agents without writing any authentication code in the application. The platform handles JWT validation, audience checking, and client allowlisting — leaving the application code focused purely on business logic.
+By combining EasyAuth v2, Microsoft Entra app roles, Protected Resource Metadata, and Azure AI Foundry agent identities, we can secure an MCP server without adding authentication logic to the application code. Azure App Service handles token validation and client allowlisting, while FastAPI and FastMCP continue to focus on the tool implementation.
 
-This pattern works for any MCP server on Azure App Service that needs to serve AI agents with managed identity authentication.
+This pattern works well for MCP servers on Azure App Service that need to be called by trusted AI agents through managed identity authentication.
 
----
-
-*Technologies used: FastAPI, FastMCP, Azure App Service, Microsoft Entra ID, Azure AI Foundry, EasyAuth v2, Protected Resource Metadata (PRM)*
+Technologies used: FastAPI, FastMCP, Azure App Service, Microsoft Entra ID, Azure AI Foundry, EasyAuth v2, Protected Resource Metadata.
